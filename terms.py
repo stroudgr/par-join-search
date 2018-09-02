@@ -1,5 +1,9 @@
 from copy import deepcopy
 
+# Lambdas to make variable declaration easier.
+RSV = lambda i, type: Var("RSV", "s", i, type)
+SV = lambda i, type: Var("SV", "s", i, type)
+IV = lambda i, type: Var("IV", "s", i, type)
 
 class Const:
 
