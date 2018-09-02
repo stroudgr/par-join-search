@@ -148,59 +148,56 @@ class JoinSearchProblem:
         else:
             self.alt = None
 
-    def search(self, init_terms=set(),bound=-1):
+    def search(self, start_terms=set(),bound=None):
 
-        # NOTE used for search when a "second" aux is needed.
-        # TODO modify code so this doesn't have to be commented/uncommented
-        # manually for the given probl.
-        #self.init_term = flatten(self.init_term.apply_subst_multi(self.lp.get_full_state_subst(), 1))
-
-
-        # Tries some guesses before starting the actual search.
-        startTerms = set() if init_terms is None else init_terms
-
-        if len(startTerms) > 0:
-
-            # Multi-queue approach
+        # Multi-queue approach
+        if len(start_terms) > 0:
 
             queues = []
-            shallow_state_vars = []
+            list_of_shallow_state_vars = []
 
-            for init_term in startTerms:
-                state = State(init_term, 0, None)
+            for start_term in start_terms:
+                state = State(start_term, 0, None)
                 seen = {state : state.cost}
                 open_set = PriorityQueue()
                 open_set.put((state.cost + self.strategy.get_heuristic(state), state))
                 queues.append((open_set, seen))
-                shallow_state_vars.append(self.get_shalow_state_vars(init_term))
+                list_of_shallow_state_vars.append(self.get_shalow_state_vars(start_term))
 
             count = 0
-            while count < bound or bound < 0:
+            while bound is None or count < bound:
                 count += 1
-                for init_term, (open_set, seen), notDeep in zip(startTerms, queues, shallow_state_vars):
+
+                # Does one iteration of each search at a time. 
+                for init_term, (open_set, seen), notDeep in zip(start_terms, queues, list_of_shallow_state_vars):
                     if not open_set.empty():
                         join = self.next_iteration(open_set, seen, notDeep)
                         if join is not None:
                             return join
 
-        notDeep = self.get_shalow_state_vars()
+        else:
+            # NOTE used for search when a "second" aux is needed.
+            # TODO modify code so this doesn't have to be commented/uncommented
+            # manually for the given probl.
+            #self.init_term = flatten(self.init_term.apply_subst_multi(self.lp.get_full_state_subst(), 1))
+            notDeep = self.get_shalow_state_vars()
 
-        self.right_SV_for_no_preprocess(notDeep)
-        init_state = self.get_initial_state()
-        init_state = init_state if self.alt is None else State(self.alt,0)
+            self.right_SV_for_no_preprocess(notDeep)
+            init_state = self.get_initial_state()
+            init_state = init_state if self.alt is None else State(self.alt,0)
 
-        open_set = PriorityQueue()
-        open_set.put((init_state.cost + self.strategy.get_heuristic(init_state), init_state))
-        seen = {init_state : init_state.cost}
+            open_set = PriorityQueue()
+            open_set.put((init_state.cost + self.strategy.get_heuristic(init_state), init_state))
+            seen = {init_state : init_state.cost}
 
-        # Necessary?
-        self.init_term = self.lp.get_state_term(self.lp.get_num_states() - 1)
+            # Necessary?
+            self.init_term = self.lp.get_state_term(self.lp.get_num_states() - 1)
 
-        t1=time()
-        while not open_set.empty():
-            join = self.next_iteration(open_set, seen, notDeep)
-            if join is not None:
-                return join
+            t1=time()
+            while not open_set.empty():
+                join = self.next_iteration(open_set, seen, notDeep)
+                if join is not None:
+                    return join
         return None
 
     # TODO comment

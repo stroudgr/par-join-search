@@ -46,18 +46,20 @@ if __name__ == '__main__':
     if argv[1] == 'search':
         signal(SIGINT, lambda sig, frame: [jsp.stats.print_summary(), exit(0)])
 
-        # Thread v.s. not thread
-        threads = 0
+        threads = False
 
-        # Search with better guess terms.
+        # This is where the search tries with the better start terms.
         if not threads:
-            join = jsp.search(init_terms=generateStartTerms(jsp.lp, jsp.solver, jsp.invars),bound=10)
+            # The search will run with each start term in its own queue, and switch between them after one iteration of search.
+            # Guarentees some fairness when running with one process.
+            join = jsp.search(start_terms=generateStartTerms(jsp),bound=10)
         else:
             # Temporary parallel implementation, to be actual implemented in
             # parallel soon.
-            terms = generateStartTerms(jsp.lp, jsp.solver, jsp.invars)
+            terms = generateStartTerms(jsp)
             joins = {}
 
+            # Runs each search independently with a different start term.
             for term in terms:
                 joins[term] = jsp.search(init_terms=[term])
 
@@ -66,7 +68,8 @@ if __name__ == '__main__':
                     join = joins[term]
                     break
 
-        # Standard search if it doesn't work
+        # Regardless of parallel/not parallel implementation, Simeon's original search
+        # will be run.
         if join is None:
             join = jsp.search()
 

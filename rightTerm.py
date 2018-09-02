@@ -1,4 +1,4 @@
-from terms import Term, Const, Var, term_types, comm_ops, assoc_ops
+from terms import Term, Const, Var, term_types, comm_ops, assoc_ops, RSV, SV
 from loop import Loop
 from util import powerset
 from solver import EqSolver
@@ -19,11 +19,14 @@ def printall(l):
 
 # Returns all of the right induced terms for the loop lp.
 def rightAll(lp):
+    subst = lp.get_full_init_subst()
+    rightIt = lambda term: term.apply_subst(subst)
     d = {}
     i = 1
     for term in lp.state_terms:
-        rsv = Var("RSV", "s", i, lp.get_state_init(i-1).get_ret_type())
-        d[rsv] = right(lp, term)
+        rsv = RSV(i, lp.get_state_init(i-1).get_ret_type())
+        #d[rsv] = right(lp, term)
+        d[rsv] = rightIt(term)
         i += 1
     return d
 
@@ -40,7 +43,11 @@ def right(lp, term):
         returned.terms.append(right(lp, subterm))
     return returned"""
     #assert(term.apply_subst(lp.get_full_init_subst()) == returned)
-    return term.apply_subst(lp.get_full_init_subst())
+    # simplest way compared given simeons work
+    # TODO this approach in rightAll
+    subst = lp.get_full_init_subst()
+    rightFun = lambda term: term.apply_subst(subst)
+    return rightFun(term)#term.apply_subst(lp.get_full_init_subst())
 
 # For the given term/invariant, returns the same invariant but with all of its
 # state variables replaced with the RSV versions.
@@ -60,28 +67,7 @@ def removeDup(solver, rights, term, invars, lastState):
         return term
 
     term = Term(term.op, list(set(flatten(term).terms)))
-    # Supposed to be something like op(si, ...) ==> join = op(siL, siR, ...)
-    # Doesn't always work : see mps
-    # Also seems redundant
-    """if lastState in term.terms and rightMe(lastState) not in term.terms:
-        new_term = term.__deepcopy__()
-        new_term.terms.append(rightMe(lastState))
-        if equivalent(solver, rights, induceRight(term, rights), new_term, True):
-            term = new_term"""
 
-    # If term is like max(a,b,...) and a >= b is an invaraint, then turn the
-    # term into max(a,...)
-    """for invar in invars:
-        # TODO generalize
-        invar2 = rightMe(invar)
-        if invar.op in {">=", ">"}:
-            for x in [invar, invar2]:
-                if set(x.terms).issubset(term.terms):
-                    if term.op == "max":
-                        term.terms.remove(x.terms[1])
-                    elif term.op == "min":
-                        term.terms.remove(x.terms[0])"""
-    #print("ABA", new_term)
     return term
 
 THRESHOLD = 1
@@ -112,7 +98,8 @@ def TOOmany(term, rights):
 # =====================================================================
 
 # TODO explain what this does
-def highDepthRight(solver, rights, init_term, ret, lastState):
+# Given a
+def highDepthRight(lp, solver, rights, init_term, ret, lastState):
 
     if type(init_term) in {Const, Var} or not term_types[init_term.op].fixed_args or lastState not in init_term.terms:
         return ret
@@ -120,7 +107,7 @@ def highDepthRight(solver, rights, init_term, ret, lastState):
     rightSV = rightMe(lastState)
     new_term.terms.append(rightSV)
 
-    if not equivalent(solver, rights, init_term, new_term):
+    if not equivalent(lp, solver, rights, init_term, new_term):
         return ret
 
     canAdd = lambda subterm: not ((type(subterm) == Const) or (type(subterm) == Var and subterm != rightSV and subterm.vclass == "RSV"))
@@ -136,36 +123,39 @@ def highDepthRight(solver, rights, init_term, ret, lastState):
             new_ret.append(new_item)
     return new_ret
 
-#TODO explain
-def generateStartTerms(lp, solver, invars):
-
+# Takes an JoinSearchProblem (jsp) and generates a potential list of better
+# start terms for the search to start from.
+def generateStartTerms(jsp):
+    lp = jsp.lp
+    solver = jsp.solver
+    invars = jsp.invars
     init_term = flatten(lp.get_state_term(lp.get_num_states() - 1))
 
     #NOTE 1 unfold for problem like counting peaks
-    # TODO add a check for it later
+    # TODO add a check for these types of problems
     #init_term = flatten(init_term.apply_subst_multi(lp.get_full_state_subst(), 1))
 
-    lastState = Var("SV", "s", lp.get_num_states())
+    lastState = SV(lp.get_num_states(), lp.state_terms[lp.get_num_states()-1].get_ret_type())#Var("SV", "s", lp.get_num_states())
 
     # Returns a dictionary that maps right state variables to the correspoding "right"
     # versions of the term.
     # For example:
-    # 0; s1 = s1 + a0
-    # -100; s2 = max(s2, s1+a0)
-    # Then the output is {s1 : 0+a0, s2 : max(-100, 0+a0)}
+    #   0; s1 = s1 + a0
+    #   -100; s2 = max(s2, s1+a0)
+    # Then the output is {sr1 : 0+a0, sr2 : max(-100, 0+a0)}
     rights = rightAll(lp)
 
     # Calls recursive helper.
     ret = generateStartTermsRecursive(init_term, init_term, solver, list(rights.keys()))
 
     # Filters the term to be only the ones that are equivalent to the original term of the program.
-    ret = {x for x in ret if equivalent(solver, rights, init_term, x)}
+    ret = {x for x in ret if equivalent(lp, solver, rights, init_term, x)}
 
     # A special case thing that ensures that high--depth state variables are delat with
     # in a particault way. TODO better descirption.
-    ret = highDepthRight(solver, rights, init_term, ret, lastState)
+    ret = highDepthRight(lp, solver, rights, init_term, ret, lastState)
 
-    # Removes terms with two many
+    # Removes terms with too many
     ret = {term for term in ret if not TOOmany(term, rights)}
     # Removes repeats
     ret = {removeDup(solver, rights, x, invars, lastState) for x in ret}.difference({None})
@@ -296,19 +286,22 @@ def generateStartTermsRecursive(term, init_term, solver, rights):
 
 
 #TODO descirption
-def induceRight(term, rights):
+# TODO apply_subst method? Yes! not needed
+"""def induceRight(term, rights):
     if type(term) == Const:
         return term.__deepcopy__()
     if type(term) == Var:
         if term.vclass == "RSV":
             return rights[term]
         return term.__deepcopy__()
-    return Term(term.op, [induceRight(subterm, rights) for subterm in term.terms])
+    return Term(term.op, [induceRight(subterm, rights) for subterm in term.terms])"""
 
-def equivalent(solver, rights, orig, new, printMe=False):
+def equivalent(lp, solver, rights, orig, new, printMe=False):
     assert(type(orig) in {Const, Term, Var} and type(new) in {Const, Term, Var})
-    out = solver.equivalent(unflatten(flatten(orig)), unflatten(flatten(induceRight(new, rights))))
-    print("### Solver: ", flatten(orig), "v.s.", flatten(new), "(", flatten(induceRight(new, rights)) , ") = ", out) if printMe else 0
+    #out = solver.equivalent(unflatten(flatten(orig)), unflatten(flatten(induceRight(new, rights))))
+    #print("### Solver: ", flatten(orig), "v.s.", flatten(new), "(", flatten(induceRight(new, rights)) , ") = ", out) if printMe else 0
+    out = solver.equivalent(unflatten(flatten(orig)), unflatten(flatten(new.apply_subst(rights))))
+    print("### Solver: ", flatten(orig), "v.s.", flatten(new), "(", flatten(new.apply_subst(rights)) , ") = ", out) if printMe else 0
     return True and out
 
 #====================================================
