@@ -103,33 +103,37 @@ class JoinSearchProblem:
             print(state.rule_num)
             input('Press Enter to continue...')
 
-    #TODO comment
-    def correct_structure(self, succ_term, notDeep):
-        if len(notDeep) == 0: #I_REWRITE or
+    def get_shallow_state_vars(self, init_term=None):
+        """Returns all the state variables of the lowest depth."""
+        init_term = self.init_term if init_term is None else init_term
+        shallow_state_vars = set()
+        for subterm in flatten(init_term).terms:
+            if type(subterm) == Var and subterm.vclass in {"SV", "RSV"}:
+                shallow_state_vars = shallow_state_vars.union({subterm.__deepcopy__()})
+        return shallow_state_vars
+
+    def correct_structure(self, succ_term, shallow_state_vars):
+        """Returns true iff succ_term doesn't diverge from init_term.
+        In particular, all of the shallow_state_vars variables must stay
+        shallow."""
+        if len(shallow_state_vars) == 0: #I_REWRITE or
             return True
         if succ_term.op == self.init_term.op:
-            if notDeep.intersection(set(succ_term.terms)) != notDeep:
-                if all(type(x) == Const for x in notDeep.difference(set(succ_term.terms))):
+            if shallow_state_vars.intersection(set(succ_term.terms)) != shallow_state_vars:
+                if all(type(x) == Const for x in shallow_state_vars.difference(set(succ_term.terms))):
                     return True
                 return False
         else:
             return False
         return True
 
-    # TODO comment
-    def get_shalow_state_vars(self, init_term=None):
-        init_term = self.init_term if init_term is None else init_term
-        notDeep = set()
-        for subterm in flatten(init_term).terms:
-            if type(subterm) == Var and subterm.vclass in {"SV", "RSV"}:
-                notDeep = notDeep.union({subterm.__deepcopy__()})
-        return notDeep
+    def right_SV_for_no_preprocess(self, shallow_state_vars):
+        """Tries to add sr_i to the term if is of the form op(s_i,...).
 
-    # TODO comment
-    def right_SV_for_no_preprocess(self, notDeep):
-        from rightTerm import right
+        ONLY used when there is no preproccessing, as it is quite similar to
+        similar to highDepthRight in rightTerm.py."""
 
-        righty = flatten(right(self.lp, self.init_term))
+        righty = flatten(self.init_term.apply_subst(self.lp.get_full_init_subst()))
         self.alt = flatten(self.init_term.__deepcopy__())
         self.alt.terms.extend(righty.terms)
 
@@ -138,10 +142,10 @@ class JoinSearchProblem:
             s_last = Var("RSV", "s", last, self.lp.get_state_init(last-1))
 
             # NOTE OLD WAY
-            notDeep = notDeep.union(set(righty.terms))
+            shallow_state_vars = shallow_state_vars.union(set(righty.terms))
 
             #NOTE NEW WAY
-            #notDeep = notDeep.union({s_last})
+            #shallow_state_vars = shallow_state_vars.union({s_last})
             #self.alt = self.init_term.__deepcopy__()
             #self.alt.terms.append(s_last)
 
@@ -149,7 +153,10 @@ class JoinSearchProblem:
             self.alt = None
 
     def search(self, start_terms=set(),bound=None):
-
+        """Performs a search, and returns a join if one is found.
+        Will start with start_terms if argument is provided, will run each
+        search for 'bound' iterations.
+        """
         # Multi-queue approach
         if len(start_terms) > 0:
 
@@ -162,16 +169,16 @@ class JoinSearchProblem:
                 open_set = PriorityQueue()
                 open_set.put((state.cost + self.strategy.get_heuristic(state), state))
                 queues.append((open_set, seen))
-                list_of_shallow_state_vars.append(self.get_shalow_state_vars(start_term))
+                list_of_shallow_state_vars.append(self.get_shallow_state_vars(start_term))
 
             count = 0
             while bound is None or count < bound:
                 count += 1
 
-                # Does one iteration of each search at a time. 
-                for init_term, (open_set, seen), notDeep in zip(start_terms, queues, list_of_shallow_state_vars):
+                # Does one iteration of each search at a time.
+                for init_term, (open_set, seen), shallow_state_vars in zip(start_terms, queues, list_of_shallow_state_vars):
                     if not open_set.empty():
-                        join = self.next_iteration(open_set, seen, notDeep)
+                        join = self.next_iteration(open_set, seen, shallow_state_vars)
                         if join is not None:
                             return join
 
@@ -180,9 +187,9 @@ class JoinSearchProblem:
             # TODO modify code so this doesn't have to be commented/uncommented
             # manually for the given probl.
             #self.init_term = flatten(self.init_term.apply_subst_multi(self.lp.get_full_state_subst(), 1))
-            notDeep = self.get_shalow_state_vars()
+            shallow_state_vars = self.get_shallow_state_vars()
 
-            self.right_SV_for_no_preprocess(notDeep)
+            self.right_SV_for_no_preprocess(shallow_state_vars)
             init_state = self.get_initial_state()
             init_state = init_state if self.alt is None else State(self.alt,0)
 
@@ -194,14 +201,18 @@ class JoinSearchProblem:
             self.init_term = self.lp.get_state_term(self.lp.get_num_states() - 1)
 
             t1=time()
-            while not open_set.empty():
-                join = self.next_iteration(open_set, seen, notDeep)
+            count = 0
+            while not open_set.empty() and (bound is None or count < bound):
+                count += 1
+                join = self.next_iteration(open_set, seen, shallow_state_vars)
                 if join is not None:
                     return join
         return None
 
-    # TODO comment
-    def next_iteration(self, open_set, seen, notDeep):
+    def next_iteration(self, open_set, seen, shallow_state_vars):
+        """Runs one iteration the search, given the PriorityQueue, seen
+        dictionary, and 'shallow state variables' of the original term.
+        """
         cost, state = open_set.get()
         if state in seen and seen[state] < cost:
             return None
@@ -233,7 +244,7 @@ class JoinSearchProblem:
             if outcome:
                 self.stats.log_state(state)
                 return outcome
-        for i,succ_state in loopthru([succ for succ in list(set(self.get_successors(state))) if self.correct_structure(succ.term, notDeep)],
+        for i,succ_state in loopthru([succ for succ in list(set(self.get_successors(state))) if self.correct_structure(succ.term, shallow_state_vars)],
                                                                             I_REWRITE, 'select a rewrite of %s:' % state):
             succ_metric = succ_state.cost + self.strategy.get_heuristic(succ_state)
             if not succ_state in seen or succ_metric < seen[succ_state]:
